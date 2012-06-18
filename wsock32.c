@@ -18,6 +18,7 @@
 #include <winsock2.h>
 #include <wsipx.h>
 #include <iphlpapi.h>
+#include "node.h"
 
 #ifdef _DEBUG
     #include <stdio.h>
@@ -26,29 +27,28 @@
     #define dprintf(...)
 #endif
 
-static unsigned int ip = INADDR_ANY;
-static unsigned int bcast = INADDR_BROADCAST;
+static unsigned char uid[6];
+static int ipx_sock = 0;
 
-static void ipx2in(const struct sockaddr_ipx *from, struct sockaddr_in *to)
+static unsigned int broadcast[16];
+
+BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 {
-    memset(to, 0, sizeof *to);
-    to->sin_family = AF_INET;
-    memcpy(&to->sin_addr.s_addr, from->sa_nodenum, 4);
-    to->sin_port = from->sa_socket;
-
-    if (from->sa_nodenum[0] == -1 || from->sa_netnum[0] == -1)
+    if (fdwReason == DLL_PROCESS_ATTACH)
     {
-        to->sin_addr.s_addr = bcast;
-    }
-}
+        UUID uuid;
+        int i;
 
-static void in2ipx(const struct sockaddr_in *from, struct sockaddr_ipx *to)
-{
-    memset(to, 0, sizeof *to);
-    to->sa_family = AF_IPX;
-    *(DWORD *)&to->sa_netnum = 0xDEADBEEF;
-    memcpy(to->sa_nodenum, &from->sin_addr.s_addr, 4);
-    to->sa_socket = from->sin_port;
+        UuidCreate(&uuid);
+        for (i = 0; i < 6; i++)
+            uid[i] = uuid.Data4[i];
+
+        dprintf("Virtual MAC address is: %02X:%02X:%02X:%02X:%02X:%02X\r\n", uid[0], uid[1], uid[2], uid[3], uid[4], uid[5]);
+
+        memset(&broadcast, 0, sizeof broadcast);
+    }
+
+    return TRUE;
 }
 
 SOCKET WINAPI ipx_socket(int af, int type, int protocol)
@@ -71,9 +71,14 @@ int WINAPI ipx_bind(SOCKET s, const struct sockaddr_ipx *name, int namelen)
     {
         DWORD ret;
         ULONG adapters_size = 0;
+        int i = 0;
         struct sockaddr_in name_in;
 
-        ipx2in((const struct sockaddr_ipx *)name, &name_in);
+        /*ipx2in((const struct sockaddr_ipx *)name, &name_in);*/
+        memset(&name_in, 0, sizeof name_in);
+        name_in.sin_family = AF_INET;
+        name_in.sin_addr.s_addr = INADDR_ANY;
+        name_in.sin_port = name->sa_socket;
 
         GetAdaptersInfo(NULL, &adapters_size);
 
@@ -89,16 +94,24 @@ int WINAPI ipx_bind(SOCKET s, const struct sockaddr_ipx *name, int namelen)
             {
                 if (adapter->IpAddressList.IpAddress.String[0])
                 {
-                    ip = inet_addr(adapter->IpAddressList.IpAddress.String);
-                    unsigned int mask = inet_addr(adapter->IpAddressList.IpMask.String);
-                    bcast = (ip & mask) ^ (mask ^ 0xFFFFFFFF);
+                    PIP_ADDR_STRING addr = &adapter->IpAddressList;
 
                     dprintf("    Adapter %lu:\n", adapter->Index);
-                    dprintf("      ip  : %s\n", adapter->IpAddressList.IpAddress.String);
-                    dprintf("      mask: %s\n", adapter->IpAddressList.IpMask.String);
-                    dprintf("      bcast: %s\n", inet_ntoa(*(struct in_addr *)&bcast));
 
-                    break;
+                    while (addr)
+                    {
+                        unsigned int ip = inet_addr(addr->IpAddress.String);
+                        unsigned int mask = inet_addr(addr->IpMask.String);
+                        unsigned int bcast = (ip & mask) ^ (mask ^ 0xFFFFFFFF);
+
+                        dprintf("      ip  : %s\n", addr->IpAddress.String);
+                        dprintf("      mask: %s\n", addr->IpMask.String);
+                        dprintf("      bcast: %s\n", inet_ntoa(*(struct in_addr *)&bcast));
+
+                        broadcast[i++] = bcast;
+
+                        addr = addr->Next;
+                    }
                 }
 
                 adapter = adapter->Next;
@@ -106,6 +119,7 @@ int WINAPI ipx_bind(SOCKET s, const struct sockaddr_ipx *name, int namelen)
         }
 
         dprintf("  binding to %s:%d\n", inet_ntoa(name_in.sin_addr), ntohs(name_in.sin_port));
+        ipx_sock = s; /* for ipx_getsockname() */
         return bind(s, (struct sockaddr *)&name_in, sizeof name_in);
     }
 
@@ -117,11 +131,35 @@ int WINAPI ipx_recvfrom(SOCKET s, char *buf, int len, int flags, struct sockaddr
     struct sockaddr_in from_in;
     int from_in_len = sizeof from_in;
 
-    int ret = recvfrom(s, buf, len, flags, (struct sockaddr *)&from_in, &from_in_len);
+    static char ibuf[4096];
 
-    in2ipx(&from_in, from);
+    int ret = recvfrom(s, ibuf, 4096, flags, (struct sockaddr *)&from_in, &from_in_len);
 
-    dprintf("recvfrom(s=%d, buf=%p, len=%d, flags=%08X, from=%p, fromlen=%p (%d) -> %d (err: %d)\n", s, buf, len, flags, from, fromlen, *fromlen, ret, WSAGetLastError());
+    if (ret > 6)
+    {
+        struct node *n = node_from_ip(&from_in);
+
+        if (!n)
+        {
+            n = node_new(ibuf, &from_in);
+
+            // out of memory
+            if (!n)
+                return 0;
+
+            node_insert(n);
+        }
+
+        from->sa_family = AF_IPX;
+        *(DWORD *)from->sa_netnum = 0xDEADBEEF;
+        memcpy(from->sa_nodenum, n->mac, sizeof from->sa_nodenum);
+        from->sa_socket = n->in.sin_port;
+        memcpy(buf, ibuf + 6, ret - 6);
+
+        dprintf("recvfrom(s=%d, buf=%p, len=%d, flags=%08X, from=%p, fromlen=%p (%d) -> %d (err: %d)\n", s, buf, len, flags, from, fromlen, *fromlen, ret - 6, WSAGetLastError());
+
+        return ret - 6;
+    }
 
     return ret;
 }
@@ -132,11 +170,43 @@ int WINAPI ipx_sendto(SOCKET s, const char *buf, int len, int flags, const struc
 
     if (to->sa_family == AF_IPX)
     {
+        static char obuf[4096];
         struct sockaddr_in to_in;
+        memset(&to_in, 0, sizeof to_in);
 
-        ipx2in(to, &to_in);
+        memcpy(obuf, uid, 6);
+        memcpy(obuf+6, buf, len);
 
-        return sendto(s, buf, len, flags, (struct sockaddr *)&to_in, sizeof to_in);
+        if (to->sa_nodenum[0] == -1 || to->sa_netnum[0] == -1)
+        {
+            int i;
+
+            to_in.sin_family = AF_INET;
+            to_in.sin_port = to->sa_socket;
+
+            for (i = 0; i < (sizeof broadcast) / 4; i++)
+            {
+                if (broadcast[i] == 0)
+                    break;
+
+                to_in.sin_addr.s_addr = broadcast[i];
+
+                sendto(s, obuf, len + 6, flags, (struct sockaddr *)&to_in, sizeof to_in);
+            }
+
+            return 0;
+        }
+        else
+        {
+            struct node *n = node_from_mac(to->sa_nodenum);
+
+            if (n)
+            {
+                memcpy(&to_in, &n->in, sizeof to_in);
+            }
+        }
+
+        return sendto(s, obuf, len + 6, flags, (struct sockaddr *)&to_in, sizeof to_in);
     }
 
     return sendto(s, buf, len, flags, (struct sockaddr *)to, tolen);
@@ -168,16 +238,21 @@ int WINAPI ipx_setsockopt(SOCKET s, int level, int optname, const char *optval, 
 
 int WINAPI ipx_getsockname(SOCKET s, struct sockaddr_ipx *name, int *namelen)
 {
-    struct sockaddr_in name_in;
-    int name_in_len = sizeof name_in;
-
     dprintf("getsockname(s=%d, name=%p, namelen=%p) (%d)\n", s, name, namelen, *namelen);
 
-    int ret = getsockname(s, (struct sockaddr *)&name_in, &name_in_len);
+    /* very unlikely to fail, if it's an issue, I'll address it later  */
+    if (s == ipx_sock)
+    {
+        struct sockaddr_in name_in;
+        int name_in_len = sizeof name_in;
 
-    name_in.sin_addr.s_addr = ip;
+        getsockname(s, (struct sockaddr *)&name_in, &name_in_len);
 
-    in2ipx(&name_in, name);
+        name->sa_family = AF_IPX;
+        *(DWORD *)name->sa_netnum = 0xDEADBEEF;
+        memcpy(name->sa_nodenum, uid, sizeof name->sa_nodenum);
+        name->sa_socket = name_in.sin_port;
+    }
 
-    return ret;
+    return getsockname(s, (struct sockaddr *)name, namelen);;
 }
