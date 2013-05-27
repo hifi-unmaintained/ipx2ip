@@ -85,9 +85,10 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 static void ipx2in(const struct sockaddr_ipx *from, struct sockaddr_in *to)
 {
     memset(to, 0, sizeof *to);
+
     to->sin_family = AF_INET;
     memcpy(&to->sin_addr.s_addr, from->sa_nodenum, 4);
-    to->sin_port = from->sa_socket;
+    memcpy(&to->sin_port, from->sa_nodenum + 4, 2);
 
     if (from->sa_nodenum[0] == -1 || from->sa_netnum[0] == -1)
     {
@@ -101,7 +102,7 @@ static void in2ipx(const struct sockaddr_in *from, struct sockaddr_ipx *to)
     to->sa_family = AF_IPX;
     *(DWORD *)&to->sa_netnum = 0xDEADBEEF;
     memcpy(to->sa_nodenum, &from->sin_addr.s_addr, 4);
-    to->sa_socket = from->sin_port;
+    memcpy(to->sa_nodenum + 4, &from->sin_port, 2);
 }
 
 SOCKET WINAPI ipx_socket(int af, int type, int protocol)

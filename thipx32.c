@@ -36,7 +36,6 @@ int WINAPI ipx_setsockopt(SOCKET s, int level, int optname, const char *optval, 
 int WINAPI ipx_getsockname(SOCKET s, struct sockaddr_ipx *name, int *namelen);
 
 static int net_socket = 0;
-static int port = 0;
 
 int WINAPI _IPX_Initialise()
 {
@@ -56,9 +55,8 @@ int WINAPI _IPX_Open_Socket95(int s)
 
     net_socket = ipx_socket(AF_IPX, 0, 0);
 
-    port = 1;
-    setsockopt(net_socket, SOL_SOCKET, SO_BROADCAST, (void *)&port, sizeof port);
-    port = s;
+    int yes = 1;
+    setsockopt(net_socket, SOL_SOCKET, SO_BROADCAST, (void *)&yes, sizeof yes);
 
     struct sockaddr_ipx tmp;
     tmp.sa_family = AF_IPX;
@@ -114,7 +112,7 @@ int WINAPI _IPX_Get_Outstanding_Buffer95(void *ptr)
         {
             *len = htons(ret + 30);
             memcpy(from, ipx_from.sa_nodenum, 4);
-            *port = ipx_from.sa_socket;
+            memcpy(port, ipx_from.sa_nodenum + 4, 2);
             return 1;
         }
     }
@@ -128,7 +126,6 @@ int WINAPI _IPX_Broadcast_Packet95(void *buf, int len)
 
     struct sockaddr_ipx to;
     to.sa_family = AF_IPX;
-    to.sa_socket = htons(port);
     memset(&to.sa_nodenum, 0xFF, sizeof to.sa_nodenum);
 
     return ipx_sendto(net_socket, buf, len, 0, &to, sizeof to);
@@ -141,8 +138,7 @@ int WINAPI _IPX_Send_Packet95(void *ptr, void *buf, int len, char *unk1, void *u
     struct sockaddr_ipx to;
     memset(&to, 0, sizeof to);
     to.sa_family = AF_IPX;
-    memcpy(&to.sa_nodenum, ptr, 4);
-    memcpy(&to.sa_socket, ptr + 4, 2);
+    memcpy(&to.sa_nodenum, ptr, 6);
 
     return ipx_sendto(net_socket, buf, len, 0, &to, sizeof (struct sockaddr_ipx));
 }
