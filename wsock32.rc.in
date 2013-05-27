@@ -9,9 +9,9 @@ PRODUCTVERSION 0,0,0,0
             VALUE "CompanyName", "Toni Spets"
             VALUE "ProductVersion", "git~__REV__"
             VALUE "InternalName", "wsock32"
-            VALUE "LegalCopyright", "Copyright (c) 2008, 2010, 2011, 2012 Toni Spets"
+            VALUE "LegalCopyright", "Copyright (c) 2008, 2010, 2011, 2012, 2013 Toni Spets"
             VALUE "OriginalFileName", "wsock32.dll"
-            VALUE "FileDescription", "IPX2IP - Fixin' ur LAN"
+            VALUE "FileDescription", "CnCNet 5 compatibility library"
         }
     }
 

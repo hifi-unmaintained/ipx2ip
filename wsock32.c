@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2011, 2012 Toni Spets <toni.spets@iki.fi>
+ * Copyright (c) 2010, 2011, 2012, 2013 Toni Spets <toni.spets@iki.fi>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -14,10 +14,11 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include <windows.h>
 #include <winsock2.h>
+#include <windows.h>
 #include <wsipx.h>
 #include <iphlpapi.h>
+#include <stdbool.h>
 
 #ifdef _DEBUG
     #include <stdio.h>
@@ -26,8 +27,60 @@
     #define dprintf(...)
 #endif
 
+#define CNCNET_PORT 8054
+#define MAX_BCAST   8
+
 static unsigned int ip = INADDR_ANY;
 static unsigned int bcast = INADDR_BROADCAST;
+static bool porthack = true;
+static bool compmode = false;
+static struct sockaddr_in bcast_list[MAX_BCAST];
+
+BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
+{
+    if (fdwReason == DLL_PROCESS_ATTACH)
+    {
+        char buf[512];
+        if (GetEnvironmentVariable("CNCNET_NODES", buf, sizeof buf) > 0)
+        {
+            dprintf("CnCNet 5 compatibility mode enabled:\n");
+
+            int i = 0;
+            char *p = strtok(buf, " ");
+            while (p)
+            {
+                char *ip = p;
+                char *port = strchr(p, ':');
+
+                if (port != NULL && port - ip < strlen(p))
+                {
+                    *port++ = '\0';
+
+                    bcast_list[i].sin_family = AF_INET;
+                    bcast_list[i].sin_addr.s_addr = inet_addr(ip);
+                    bcast_list[i].sin_port = htons(atoi(port));
+
+                    if (ntohs(bcast_list[i].sin_port) != CNCNET_PORT)
+                    {
+                        porthack = false;
+                    }
+
+                    dprintf("  %s:%d\n", inet_ntoa(bcast_list[i].sin_addr), ntohs(bcast_list[i].sin_port));
+
+                    i++;
+                }
+
+                p = strtok(NULL, " ");
+            }
+
+            dprintf("Port hack is %s.\n", porthack ? "enabled" : "disabled");
+
+            compmode = true;
+        }
+    }
+
+    return TRUE;
+}
 
 static void ipx2in(const struct sockaddr_ipx *from, struct sockaddr_in *to)
 {
@@ -75,6 +128,11 @@ int WINAPI ipx_bind(SOCKET s, const struct sockaddr_ipx *name, int namelen)
 
         ipx2in((const struct sockaddr_ipx *)name, &name_in);
 
+        if (compmode)
+        {
+            name_in.sin_port = htons(CNCNET_PORT);
+        }
+
         GetAdaptersInfo(NULL, &adapters_size);
 
         PIP_ADAPTER_INFO adapters = malloc(adapters_size);
@@ -119,6 +177,11 @@ int WINAPI ipx_recvfrom(SOCKET s, char *buf, int len, int flags, struct sockaddr
 
     int ret = recvfrom(s, buf, len, flags, (struct sockaddr *)&from_in, &from_in_len);
 
+    if (compmode && porthack)
+    {
+        from_in.sin_port = htons(CNCNET_PORT);
+    }
+
     in2ipx(&from_in, from);
 
     dprintf("recvfrom(s=%d, buf=%p, len=%d, flags=%08X, from=%p, fromlen=%p (%d) -> %d (err: %d)\n", s, buf, len, flags, from, fromlen, *fromlen, ret, WSAGetLastError());
@@ -135,6 +198,21 @@ int WINAPI ipx_sendto(SOCKET s, const char *buf, int len, int flags, const struc
         struct sockaddr_in to_in;
 
         ipx2in(to, &to_in);
+
+        if (compmode && to_in.sin_addr.s_addr == bcast)
+        {
+            dprintf("  doing a compatibility broadcast\n");
+
+            for (int i = 0; i < MAX_BCAST; i++)
+            {
+                if (bcast_list[i].sin_family)
+                {
+                    sendto(s, buf, len, flags, (struct sockaddr *)&bcast_list[i], sizeof bcast_list[i]);
+                }
+            }
+
+            return len;
+        }
 
         return sendto(s, buf, len, flags, (struct sockaddr *)&to_in, sizeof to_in);
     }
