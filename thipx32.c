@@ -36,6 +36,7 @@ int WINAPI ipx_setsockopt(SOCKET s, int level, int optname, const char *optval, 
 int WINAPI ipx_getsockname(SOCKET s, struct sockaddr_ipx *name, int *namelen);
 
 static int net_socket = 0;
+static int port = 0;
 
 int WINAPI _IPX_Initialise()
 {
@@ -54,10 +55,16 @@ int WINAPI _IPX_Open_Socket95(int s)
     }
 
     net_socket = ipx_socket(AF_IPX, 0, 0);
+
+    port = 1;
+    setsockopt(net_socket, SOL_SOCKET, SO_BROADCAST, (void *)&port, sizeof port);
+    port = s;
+
     struct sockaddr_ipx tmp;
     tmp.sa_family = AF_IPX;
     memset(tmp.sa_nodenum, 0, sizeof tmp.sa_nodenum);
     tmp.sa_socket = htons(s);
+
     ipx_bind(net_socket, &tmp, sizeof tmp);
 
     return 0;
@@ -98,9 +105,7 @@ int WINAPI _IPX_Get_Outstanding_Buffer95(void *ptr)
     FD_ZERO(&read_fds);
     FD_SET(net_socket, &read_fds);
 
-    select(net_socket+1, &read_fds, NULL, NULL, &tv);
-
-    if (FD_ISSET(net_socket, &read_fds))
+    if (select(net_socket+1, &read_fds, NULL, NULL, &tv))
     {
         int ipx_len = sizeof (struct sockaddr_ipx);
         ret = ipx_recvfrom(net_socket, buf, 900, 0, &ipx_from, &ipx_len);
@@ -120,20 +125,25 @@ int WINAPI _IPX_Get_Outstanding_Buffer95(void *ptr)
 int WINAPI _IPX_Broadcast_Packet95(void *buf, int len)
 {
     dprintf("_IPX_Broadcast_Packet95(buf=%p, len=%d)\n", buf, len);
+
     struct sockaddr_ipx to;
-    memset(&to, 0xFF, sizeof to);
     to.sa_family = AF_IPX;
-    return ipx_sendto(net_socket, buf, len, 0, &to, sizeof (struct sockaddr_ipx));
+    to.sa_socket = htons(port);
+    memset(&to.sa_nodenum, 0xFF, sizeof to.sa_nodenum);
+
+    return ipx_sendto(net_socket, buf, len, 0, &to, sizeof to);
 }
 
 int WINAPI _IPX_Send_Packet95(void *ptr, void *buf, int len, char *unk1, void *unk2)
 {
     dprintf("_IPX_Send_Packet95(ptr=%p, buf=%p, len=%d, unk1=%p, unk2=%p)\n", ptr, buf, len, unk1, unk2);
+
     struct sockaddr_ipx to;
     memset(&to, 0, sizeof to);
     to.sa_family = AF_IPX;
     memcpy(&to.sa_nodenum, ptr, 4);
     memcpy(&to.sa_socket, ptr + 4, 2);
+
     return ipx_sendto(net_socket, buf, len, 0, &to, sizeof (struct sockaddr_ipx));
 }
 

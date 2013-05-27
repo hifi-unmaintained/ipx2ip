@@ -224,6 +224,11 @@ int WINAPI ipx_getsockopt(SOCKET s, int level, int optname, char *optval, int *o
 {
     dprintf("getsockopt(s=%d, level=%08X, optname=%08X, optval=%p, optlen=%p)\n", s, level, optname, optval, optlen);
 
+    if (optname == 0x4007)
+    {
+        return 0;
+    }
+
     if (level == 0x3E8)
     {
         level = 0xFFFF;
