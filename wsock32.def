@@ -2,12 +2,12 @@ LIBRARY     cncnet.dll
 
 EXPORTS
     accept                  = "system32\\wsock32".accept                   @1
-    bind                    = ipx_bind                                     @2
+    bind                    = "system32\\wsock32".bind                     @2
     closesocket             = "system32\\wsock32".closesocket              @3
     connect                 = "system32\\wsock32".connect                  @4
     getpeername             = "system32\\wsock32".getpeername              @5
-    getsockname             = ipx_getsockname                              @6
-    getsockopt              = ipx_getsockopt                               @7
+    getsockname             = "system32\\wsock32".getsockname              @6
+    getsockopt              = "system32\\wsock32".getsockopt               @7
     htonl                   = "system32\\wsock32".htonl                    @8
     htons                   = "system32\\wsock32".htons                    @9
     inet_addr               = "system32\\wsock32".inet_addr                @10
@@ -16,14 +16,14 @@ EXPORTS
     listen                  = "system32\\wsock32".listen                   @13
     ntohl                   = "system32\\wsock32".ntohl                    @14
     ntohs                   = "system32\\wsock32".ntohs                    @15
-    recv                    = "system32\\wsock32".recv                     @16
-    recvfrom                = ipx_recvfrom                                 @17
+    recv                    = compat_recv                                  @16
+    recvfrom                = compat_recvfrom                              @17
     select                  = "system32\\wsock32".select                   @18
     send                    = "system32\\wsock32".send                     @19
-    sendto                  = ipx_sendto                                   @20
-    setsockopt              = ipx_setsockopt                               @21
+    sendto                  = compat_sendto                                @20
+    setsockopt              = "system32\\wsock32".setsockopt               @21
     shutdown                = "system32\\wsock32".shutdown                 @22
-    socket                  = ipx_socket                                   @23
+    socket                  = "system32\\wsock32".socket                   @23
     gethostbyaddr           = "system32\\wsock32".gethostbyaddr            @51
     gethostbyname           = "system32\\wsock32".gethostbyname            @52
     getprotobyname          = "system32\\wsock32".getprotobyname           @53
@@ -51,14 +51,3 @@ EXPORTS
     WEP                     = "system32\\wsock32".WEP                      @500
     EnumProtocolsA          = "system32\\wsock32".EnumProtocolsA           @1111
     EnumProtocolsW          = "system32\\wsock32".EnumProtocolsW           @1112
-
-    _IPX_Initialise                                                        @9001
-    _IPX_Open_Socket95                                                     @9002
-    _IPX_Get_Outstanding_Buffer95                                          @9003
-    _IPX_Broadcast_Packet95                                                @9004
-    _IPX_Send_Packet95                                                     @9005
-    _IPX_Get_Connection_Number95                                           @9006
-    _IPX_Start_Listening95                                                 @9007
-    _IPX_Get_Local_Target95                                                @9008
-    _IPX_Close_Socket95                                                    @9009
-    _IPX_Shut_Down95                                                       @9010
