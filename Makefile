@@ -1,5 +1,5 @@
 CC=i686-w64-mingw32-gcc
-CFLAGS=-std=c99 -O2 -s -Wall -fno-strict-aliasing -D_DEBUG
+CFLAGS=-std=c99 -O2 -s -Wall -fno-strict-aliasing
 WINDRES=i686-w64-mingw32-windres
 LIBS=-lws2_32 -lmsvcrt
 REV=$(shell sh -c 'git rev-parse --short @{0}')

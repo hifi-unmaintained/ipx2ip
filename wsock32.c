@@ -29,27 +29,20 @@ BOOL WINAPI DllMainCRTStartup(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvRes
 
 static u_long   tunnel_ip       = 0;
 static short    port            = 0;
-static int      irc_socket      = 0;
+static int      chat_socket     = 0;
 
 static char     recv_buf[1024];
 static int      recv_buf_pos    = 0;
-static int      recv_buf_len    = sizeof recv_buf; // IRC message max length is 512 bytes, double allows splitting safely
 
-// does really bad heurestics to detect the IRC socket and then parse TunnelServ messages
 int WINAPI compat_recv(SOCKET s, char *buf, int len, int flags)
 {
     int ret = recv(s, buf, len, flags);
 
-    if (ret != -1 && len > 1) {
-        dprintf("recv(s=%d, buf=%p, len=%d, flags=%08X) -> %d (err: %d)\n", s, buf, len, flags, ret, WSAGetLastError());
+    dprintf("recv(s=%d, buf=%p, len=%d, flags=%08X) -> %d (err: %d)\n", s, buf, len, flags, ret, WSAGetLastError());
 
-        if (strstr(buf, "TunnelServ"))
-            irc_socket = s;
-
-        if (s != irc_socket)
-            return ret;
-
-        if (recv_buf_pos + ret < recv_buf_len)
+    if (s == chat_socket && ret > 0)
+    {
+        if (recv_buf_pos + ret < sizeof recv_buf)
         {
             memcpy(recv_buf + recv_buf_pos, buf, ret);
             recv_buf_pos += ret;
@@ -63,7 +56,7 @@ int WINAPI compat_recv(SOCKET s, char *buf, int len, int flags)
                 {
                     recv_buf[i] = '\0';
 
-                    if (strncmp(l, ":TunnelServ!", 12) == 0)
+                    if (strncmp(l, "TUNNEL", 6) == 0)
                     {
                         dprintf("Message: %s\n", l);
 
@@ -74,7 +67,8 @@ int WINAPI compat_recv(SOCKET s, char *buf, int len, int flags)
                             tunnel_ip = inet_addr(last);
                             if (tunnel_ip == 0xFFFFFFFF)
                                 tunnel_ip = 0;
-                            dprintf("Tunnel ip set to %08X\n", tunnel_ip);
+
+                            dprintf("Tunnel ip set to %s\n", inet_ntoa(*(struct in_addr *)&tunnel_ip));
                         }
                     }
 
@@ -82,12 +76,14 @@ int WINAPI compat_recv(SOCKET s, char *buf, int len, int flags)
                 }
             }
 
-            if (l < recv_buf + recv_buf_len)
+            recv_buf_pos = 0;
+
+            if (l < recv_buf + sizeof recv_buf)
             {
                 int len = strlen(l);
                 memmove(recv_buf, l, len);
                 recv_buf[len] = '\0';
-                recv_buf_pos = 0;
+                recv_buf_pos = len;
             }
         }
         else
@@ -98,6 +94,34 @@ int WINAPI compat_recv(SOCKET s, char *buf, int len, int flags)
     }
 
     return ret;
+}
+
+int WINAPI compat_closesocket(SOCKET s)
+{
+    if (s == chat_socket)
+    {
+        dprintf("Chat socket closed.\n");
+        chat_socket = 0;
+        recv_buf_pos = 0;
+    }
+
+    return closesocket(s);
+}
+
+int WINAPI compat_send(SOCKET s, const char *buf, int len, int flags)
+{
+    dprintf("send(s=%d, buf=%p, len=%d, flags=%08X)\n", s, buf, len, flags);
+
+    // detect chat socket
+    if (chat_socket == 0 && len >= 5 && strncmp(buf, "CVERS", 5) == 0)
+    {
+        const char *ann = "TUNNEL 1\r\n";
+        chat_socket = s;
+        dprintf("Chat socket found.\n");
+        send(s, ann, strlen(ann), 0);
+    }
+
+    return send(s, buf, len, flags);
 }
 
 int WINAPI compat_recvfrom(SOCKET s, char *buf, int len, int flags, struct sockaddr_in *from, int *fromlen)
