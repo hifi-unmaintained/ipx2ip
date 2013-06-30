@@ -27,13 +27,13 @@
 
 BOOL WINAPI DllMainCRTStartup(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) { return TRUE; }
 
-static u_long tunnel_ip = 0;
-static short port = 0;
-static int irc_socket = 0;
+static u_long   tunnel_ip       = 0;
+static short    port            = 0;
+static int      irc_socket      = 0;
 
-static char recv_buf[1024];
-static int recv_buf_pos = 0;
-static int recv_buf_len = sizeof recv_buf; // IRC message max length is 512 bytes, double allows splitting safely
+static char     recv_buf[1024];
+static int      recv_buf_pos    = 0;
+static int      recv_buf_len    = sizeof recv_buf; // IRC message max length is 512 bytes, double allows splitting safely
 
 // does really bad heurestics to detect the IRC socket and then parse TunnelServ messages
 int WINAPI compat_recv(SOCKET s, char *buf, int len, int flags)
@@ -122,7 +122,6 @@ int WINAPI compat_sendto(SOCKET s, const char *buf, int len, int flags, const st
     struct sockaddr_in tunnel_to;
 
     dprintf("sendto(s=%d, buf=%p, len=%d, flags=%08X, to=%p, tolen=%d)\n", s, buf, len, flags, to, tolen);
-    dprintf("  ip: %08X %08X\n", (unsigned int)to->sin_addr.s_addr, (unsigned int)(to->sin_addr.s_addr >> 16));
 
     if ((to->sin_addr.s_addr >> 16) == 0 && tunnel_ip)
     {
