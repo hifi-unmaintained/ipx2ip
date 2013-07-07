@@ -17,6 +17,7 @@
 #include <winsock2.h>
 #include <windows.h>
 #include <stdbool.h>
+#include <string.h>
 
 #ifdef _DEBUG
     #include <stdio.h>
@@ -24,6 +25,14 @@
 #else
     #define dprintf(...)
 #endif
+
+struct ip_map {
+    u_long ip;
+    short port;
+};
+
+#define MAX_MAPPING 8
+struct ip_map mapping[MAX_MAPPING];
 
 BOOL WINAPI DllMainCRTStartup(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) { return TRUE; }
 
@@ -58,18 +67,48 @@ int WINAPI compat_recv(SOCKET s, char *buf, int len, int flags)
 
                     if (strncmp(l, "TUNNEL", 6) == 0)
                     {
-                        dprintf("Message: %s\n", l);
+                        dprintf("Tunnel message: %s\n", l);
 
-                        char *last = strrchr(l, ' ');
-                        if (last && last - recv_buf > 1)
-                        {
-                            last++;
-                            tunnel_ip = inet_addr(last);
-                            if (tunnel_ip == 0xFFFFFFFF)
-                                tunnel_ip = 0;
+                        // always reset
+                        memset(mapping, 0, sizeof mapping);
+                        tunnel_ip = 0;
 
-                            dprintf("Tunnel ip set to %s\n", inet_ntoa(*(struct in_addr *)&tunnel_ip));
-                        }
+                        char *ip = strtok(l, " ");
+                        int i = 0;
+
+                        do {
+                            if (i == 0 && strcmp(ip, "TUNNEL"))
+                                break;
+
+                            if (i == 1)
+                            {
+                                tunnel_ip = inet_addr(ip);
+                                if (tunnel_ip == 0xFFFFFFFF || tunnel_ip == 0)
+                                {
+                                    tunnel_ip = 0;
+                                    break;
+                                }
+
+                                dprintf("Tunnel ip set to %08X\n", (unsigned int)tunnel_ip);
+                            }
+
+                            if (i > 1 && i < MAX_MAPPING - 2)
+                            {
+                                dprintf("Mapping %d: %s\n", i - 2, ip);
+
+                                char *d = strstr(ip, ":");
+                                if (d && d < (ip + strlen(ip) - 1))
+                                {
+                                    *d++ = '\0';
+                                    mapping[i - 2].ip = inet_addr(ip);
+                                    mapping[i - 2].port = htons(atoi(d));
+
+                                    dprintf("Mapping %d: %08X:%d\n", i - 2, (unsigned int)mapping[i - 2].ip, mapping[i - 2].port);
+                                }
+                            }
+
+                            i++;
+                        } while((ip = strtok(NULL, " ")));
                     }
 
                     l = recv_buf + i + 1;
@@ -129,13 +168,20 @@ int WINAPI compat_recvfrom(SOCKET s, char *buf, int len, int flags, struct socka
     int ret = recvfrom(s, buf, len, flags, (struct sockaddr *)from, fromlen);
 
     dprintf("recvfrom(s=%d, buf=%p, len=%d, flags=%08X, from=%p, fromlen=%p (%d) -> %d (err: %d)\n", s, buf, len, flags, from, fromlen, *fromlen, ret, WSAGetLastError());
-
+    
     if (from->sin_addr.s_addr == tunnel_ip)
     {
-        from->sin_addr.s_addr = ntohs(from->sin_port);
-        // hack: assuming single port
-        from->sin_port = port;
-        dprintf("  receiving from %s:%d\n", inet_ntoa(from->sin_addr), ntohs(from->sin_port));
+        for (int i = 0; i < MAX_MAPPING; i++)
+        {
+            if (mapping[i].port == from->sin_port)
+            {
+                from->sin_addr.s_addr = mapping[i].ip;
+                // hack: assuming single port
+                from->sin_port = port;
+                dprintf("  receiving from %s:%d\n", inet_ntoa(from->sin_addr), ntohs(from->sin_port));
+                break;
+            }
+        }
     }
 
     return ret;
@@ -146,17 +192,21 @@ int WINAPI compat_sendto(SOCKET s, const char *buf, int len, int flags, const st
     struct sockaddr_in tunnel_to;
 
     dprintf("sendto(s=%d, buf=%p, len=%d, flags=%08X, to=%p, tolen=%d)\n", s, buf, len, flags, to, tolen);
-
-    if ((to->sin_addr.s_addr >> 16) == 0 && tunnel_ip)
+ 
+    for (int i = 0; i < MAX_MAPPING; i++)
     {
-        dprintf("  forwarding to %s:%d\n", inet_ntoa(*(struct in_addr *)&tunnel_ip), (int)to->sin_addr.s_addr);
-        // hack: assuming single port
-        port = to->sin_port;
+        if (mapping[i].ip == to->sin_addr.s_addr)
+        {
+            dprintf("  forwarding to %s:%d\n", inet_ntoa(*(struct in_addr *)&tunnel_ip), ntohs(mapping[i].port));
+            // hack: assuming single port
+            port = to->sin_port;
 
-        tunnel_to.sin_family = AF_INET;
-        tunnel_to.sin_port = htons(to->sin_addr.s_addr);
-        tunnel_to.sin_addr.s_addr = tunnel_ip;
-        to = &tunnel_to;
+            tunnel_to.sin_family = AF_INET;
+            tunnel_to.sin_port = mapping[i].port;
+            tunnel_to.sin_addr.s_addr = tunnel_ip;
+            to = &tunnel_to;
+            break;
+        }
     }
 
     return sendto(s, buf, len, flags, (struct sockaddr *)to, tolen);
